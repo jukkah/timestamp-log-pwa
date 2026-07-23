@@ -97,6 +97,24 @@
     #add:active {
       opacity: 0.85;
     }
+
+    #ver {
+      position: fixed;
+      left: calc(8px + env(safe-area-inset-left, 0px));
+      bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+      z-index: 1;
+      margin: 0;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: var(--fg);
+      opacity: 0.35;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 11px;
+      line-height: 1;
+      pointer-events: none;
+      user-select: none;
+    }
   </style>
 </head>
 <body>
@@ -115,6 +133,7 @@ Use + to insert a timestamp.
 Everything is saved on this device only."
   ></textarea>
   <button id="add" type="button" aria-label="Insert timestamp">+</button>
+  <div id="ver" aria-hidden="true">v4</div>
   <script>
     (function () {
       "use strict";
@@ -136,6 +155,7 @@ Everything is saved on this device only."
       var skipOrphanCheck = false;
       var prevValue = "";
       var prevCaret = 0;
+      var composing = false;
 
       function rememberState() {
         prevValue = log.value;
@@ -324,6 +344,7 @@ Everything is saved on this device only."
 
       // Fallback for IME/voice when beforeinput is missing or not cancelable:
       // if an empty/whitespace line just gained content, prepend a timestamp.
+      // Uses the frozen pre-composition baseline while Gboard is composing.
       function ensureStampAfterInsert() {
         var value = log.value;
         var caret = log.selectionStart;
@@ -368,11 +389,32 @@ Everything is saved on this device only."
         e.preventDefault();
       }
 
+      function onCompositionStart() {
+        composing = true;
+        // Freeze prevValue/prevCaret as the pre-IME baseline. Gboard (and voice)
+        // emit many intermediate inputs; updating the baseline would hide that
+        // the line started empty and block timestamp insertion.
+      }
+
+      function onCompositionEnd() {
+        composing = false;
+        ensureStampAfterInsert();
+        rememberState();
+        save();
+      }
+
       function onInput(e) {
         var inputType = e.inputType;
 
         if (isDeleteInputType(inputType)) {
           stripOrphanTimestamp();
+        }
+
+        // While composing, keep the pre-composition baseline and wait for
+        // compositionend (Gboard voice/typing often goes through IME).
+        if (composing || e.isComposing) {
+          save();
+          return;
         }
 
         if (isStampableInput(inputType)) {
@@ -425,26 +467,30 @@ Everything is saved on this device only."
       log.addEventListener("beforeinput", onBeforeInput);
       log.addEventListener("keydown", onKeyDown);
       log.addEventListener("input", onInput);
-      log.addEventListener("compositionend", function () {
-        ensureStampAfterInsert();
-        rememberState();
-        save();
-      });
+      log.addEventListener("compositionstart", onCompositionStart);
+      log.addEventListener("compositionend", onCompositionEnd);
       log.addEventListener("scroll", save, { passive: true });
       log.addEventListener("blur", save);
       log.addEventListener("keyup", function () {
-        rememberState();
+        if (!composing) rememberState();
         save();
       });
       log.addEventListener("select", function () {
-        rememberState();
+        if (!composing) rememberState();
         save();
       });
       addBtn.addEventListener("click", onAddClick);
 
       if ("serviceWorker" in navigator) {
+        var hadController = !!navigator.serviceWorker.controller;
+        navigator.serviceWorker.addEventListener("controllerchange", function () {
+          // Reload once when a new SW takes over so the phone picks up updates.
+          if (hadController) location.reload();
+        });
         window.addEventListener("load", function () {
-          navigator.serviceWorker.register("sw.js").catch(function () {});
+          navigator.serviceWorker.register("sw.js").then(function (reg) {
+            reg.update();
+          }).catch(function () {});
         });
       }
     })();
