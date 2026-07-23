@@ -123,6 +123,13 @@
       var addBtn = document.getElementById("add");
       var saving = false;
       var skipOrphanCheck = false;
+      var prevValue = "";
+      var prevCaret = 0;
+
+      function rememberState() {
+        prevValue = log.value;
+        prevCaret = log.selectionStart;
+      }
 
       function pad2(n) {
         return n < 10 ? "0" + n : String(n);
@@ -263,13 +270,79 @@
         skipOrphanCheck = true;
         insertAtCaret(stamp + data);
         skipOrphanCheck = false;
+        rememberState();
         save();
         return true;
       }
 
+      // Voice typing (e.g. Gboard) often uses these instead of plain insertText.
+      function isStampableBeforeInput(inputType) {
+        return (
+          inputType === "insertText" ||
+          inputType === "insertReplacementText" ||
+          inputType === "insertFromComposition"
+        );
+      }
+
+      function isStampableInput(inputType) {
+        if (!inputType) return true;
+        if (
+          inputType === "insertFromPaste" ||
+          inputType === "insertFromDrop" ||
+          inputType === "insertLineBreak" ||
+          inputType === "insertParagraph"
+        ) {
+          return false;
+        }
+        return (
+          inputType === "insertText" ||
+          inputType === "insertReplacementText" ||
+          inputType === "insertFromComposition" ||
+          inputType === "insertCompositionText"
+        );
+      }
+
+      function isDeleteInputType(inputType) {
+        if (!inputType) return false;
+        return (
+          inputType.indexOf("delete") === 0 ||
+          inputType === "historyUndo" ||
+          inputType === "historyRedo"
+        );
+      }
+
+      // Fallback for IME/voice when beforeinput is missing or not cancelable:
+      // if an empty/whitespace line just gained content, prepend a timestamp.
+      function ensureStampAfterInsert() {
+        var value = log.value;
+        var caret = log.selectionStart;
+        var bounds = lineBounds(value, Math.min(caret, value.length));
+        var line = value.slice(bounds.start, bounds.end);
+
+        if (startsWithTimestamp(line) || isWhitespaceOnly(line)) return;
+
+        var oldCaret = Math.min(prevCaret, prevValue.length);
+        var oldBounds = lineBounds(prevValue, oldCaret);
+        var oldLine = prevValue.slice(oldBounds.start, oldBounds.end);
+
+        if (!shouldStampLine(oldLine)) return;
+
+        var firstContent = line.search(/\S/);
+        if (firstContent < 0) return;
+
+        var stamp = formatTimestamp() + " ";
+        var insertAt = bounds.start + firstContent;
+        skipOrphanCheck = true;
+        log.value = value.slice(0, insertAt) + stamp + value.slice(insertAt);
+        var newCaret = caret + stamp.length;
+        log.setSelectionRange(newCaret, newCaret);
+        skipOrphanCheck = false;
+      }
+
       function onBeforeInput(e) {
-        if (e.isComposing) return;
-        if (e.inputType !== "insertText") return;
+        // Do not block composition mid-flight; voice often composes then commits.
+        if (e.isComposing && e.inputType !== "insertFromComposition") return;
+        if (!isStampableBeforeInput(e.inputType)) return;
         if (!tryStampBeforeInsert(e.data)) return;
         e.preventDefault();
       }
@@ -284,19 +357,24 @@
         e.preventDefault();
       }
 
-      function isDeleteInputType(inputType) {
-        if (!inputType) return true;
-        return (
-          inputType.indexOf("delete") === 0 ||
-          inputType === "historyUndo" ||
-          inputType === "historyRedo"
-        );
-      }
-
       function onInput(e) {
-        if (isDeleteInputType(e.inputType)) {
+        var inputType = e.inputType;
+
+        if (isDeleteInputType(inputType)) {
           stripOrphanTimestamp();
         }
+
+        if (isStampableInput(inputType)) {
+          ensureStampAfterInsert();
+        }
+
+        // Some Android/WebView builds omit inputType for voice commits.
+        if (!inputType) {
+          ensureStampAfterInsert();
+          stripOrphanTimestamp();
+        }
+
+        rememberState();
         save();
       }
 
@@ -319,11 +397,13 @@
         skipOrphanCheck = true;
         insertAtCaret(formatTimestamp() + " ");
         skipOrphanCheck = false;
+        rememberState();
         ensureCaretVisible();
         save();
       }
 
       restore();
+      rememberState();
       log.focus();
 
       // Re-assert focus after layout (helps some mobile browsers).
@@ -334,10 +414,21 @@
       log.addEventListener("beforeinput", onBeforeInput);
       log.addEventListener("keydown", onKeyDown);
       log.addEventListener("input", onInput);
+      log.addEventListener("compositionend", function () {
+        ensureStampAfterInsert();
+        rememberState();
+        save();
+      });
       log.addEventListener("scroll", save, { passive: true });
       log.addEventListener("blur", save);
-      log.addEventListener("keyup", save);
-      log.addEventListener("select", save);
+      log.addEventListener("keyup", function () {
+        rememberState();
+        save();
+      });
+      log.addEventListener("select", function () {
+        rememberState();
+        save();
+      });
       addBtn.addEventListener("click", onAddClick);
 
       if ("serviceWorker" in navigator) {

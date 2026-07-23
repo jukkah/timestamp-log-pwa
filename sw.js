@@ -1,4 +1,4 @@
-const CACHE_NAME = "timelog-v1";
+const CACHE_NAME = "timelog-v2";
 const ASSETS = [
   "./",
   "./index.html",
