@@ -70,6 +70,12 @@
       overflow-wrap: break-word;
     }
 
+    #log::placeholder {
+      color: var(--fg);
+      opacity: 0.45;
+      white-space: pre-wrap;
+    }
+
     #add {
       position: fixed;
       right: calc(var(--fab-margin) + env(safe-area-inset-right, 0px));
@@ -102,6 +108,11 @@
     autocapitalize="sentences"
     enterkeyhint="enter"
     aria-label="Timestamp log"
+    placeholder="Start typing on a new line — a timestamp is added automatically.
+
+Press Enter for a blank line.
+Use + to insert a timestamp.
+Everything is saved on this device only."
   ></textarea>
   <button id="add" type="button" aria-label="Insert timestamp">+</button>
   <script>
