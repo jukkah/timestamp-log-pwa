@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Timestamp Log</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #ffffff;
+      --fg: #000000;
+      --fab-bg: #000000;
+      --fab-fg: #ffffff;
+      --fab-size: 56px;
+      --fab-margin: 16px;
+      --pad: 12px;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #000000;
+        --fg: #ffffff;
+        --fab-bg: #ffffff;
+        --fab-fg: #000000;
+      }
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: var(--bg);
+      color: var(--fg);
+    }
+
+    body {
+      overflow: hidden;
+    }
+
+    #log {
+      display: block;
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      border: 0;
+      outline: none;
+      resize: none;
+      padding: var(--pad);
+      padding-bottom: calc(var(--fab-size) + var(--fab-margin) * 2 + env(safe-area-inset-bottom, 0px));
+      padding-left: calc(var(--pad) + env(safe-area-inset-left, 0px));
+      padding-right: calc(var(--pad) + env(safe-area-inset-right, 0px));
+      padding-top: calc(var(--pad) + env(safe-area-inset-top, 0px));
+      background: var(--bg);
+      color: var(--fg);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 17px;
+      line-height: 1.45;
+      caret-color: var(--fg);
+      white-space: pre-wrap;
+      overflow-wrap: break-word;
+    }
+
+    #add {
+      position: fixed;
+      right: calc(var(--fab-margin) + env(safe-area-inset-right, 0px));
+      bottom: calc(var(--fab-margin) + env(safe-area-inset-bottom, 0px));
+      width: var(--fab-size);
+      height: var(--fab-size);
+      border: 0;
+      border-radius: 50%;
+      background: var(--fab-bg);
+      color: var(--fab-fg);
+      font-size: 32px;
+      line-height: 1;
+      cursor: pointer;
+      z-index: 1;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
+
+    #add:active {
+      opacity: 0.85;
+    }
+  </style>
+</head>
+<body>
+  <textarea
+    id="log"
+    spellcheck="false"
+    autocomplete="off"
+    autocorrect="off"
+    autocapitalize="sentences"
+    enterkeyhint="enter"
+    aria-label="Timestamp log"
+  ></textarea>
+  <button id="add" type="button" aria-label="Insert timestamp">+</button>
+  <script>
+    (function () {
+      "use strict";
+
+      var KEYS = {
+        text: "timelog-v1-text",
+        selectionStart: "timelog-v1-selectionStart",
+        selectionEnd: "timelog-v1-selectionEnd",
+        selectionDirection: "timelog-v1-selectionDirection",
+        scrollTop: "timelog-v1-scrollTop"
+      };
+
+      var TS_RE = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2})/;
+      var ORPHAN_TS_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}\s*$/;
+
+      var log = document.getElementById("log");
+      var addBtn = document.getElementById("add");
+      var saving = false;
+      var skipOrphanCheck = false;
+
+      function pad2(n) {
+        return n < 10 ? "0" + n : String(n);
+      }
+
+      function formatTimestamp(date) {
+        var d = date || new Date();
+        return (
+          d.getFullYear() +
+          "-" +
+          pad2(d.getMonth() + 1) +
+          "-" +
+          pad2(d.getDate()) +
+          " " +
+          pad2(d.getHours()) +
+          ":" +
+          pad2(d.getMinutes())
+        );
+      }
+
+      function lineBounds(value, index) {
+        var start = value.lastIndexOf("\n", index - 1) + 1;
+        var end = value.indexOf("\n", index);
+        if (end === -1) end = value.length;
+        return { start: start, end: end };
+      }
+
+      function isWhitespaceOnly(str) {
+        return /^\s*$/.test(str);
+      }
+
+      function startsWithTimestamp(str) {
+        return TS_RE.test(str);
+      }
+
+      function shouldStampLine(line) {
+        return isWhitespaceOnly(line) && !startsWithTimestamp(line);
+      }
+
+      function save() {
+        if (saving) return;
+        saving = true;
+        try {
+          localStorage.setItem(KEYS.text, log.value);
+          localStorage.setItem(KEYS.selectionStart, String(log.selectionStart));
+          localStorage.setItem(KEYS.selectionEnd, String(log.selectionEnd));
+          localStorage.setItem(KEYS.selectionDirection, log.selectionDirection || "none");
+          localStorage.setItem(KEYS.scrollTop, String(log.scrollTop));
+        } catch (err) {
+          if (err && (err.name === "QuotaExceededError" || err.code === 22)) {
+            alert("Storage is full. The log could not be saved.");
+          }
+        } finally {
+          saving = false;
+        }
+      }
+
+      function restore() {
+        var text = localStorage.getItem(KEYS.text);
+        if (text !== null) log.value = text;
+
+        var start = parseInt(localStorage.getItem(KEYS.selectionStart), 10);
+        var end = parseInt(localStorage.getItem(KEYS.selectionEnd), 10);
+        var direction = localStorage.getItem(KEYS.selectionDirection) || "none";
+        var len = log.value.length;
+
+        if (!isNaN(start) && !isNaN(end)) {
+          start = Math.max(0, Math.min(start, len));
+          end = Math.max(0, Math.min(end, len));
+          try {
+            log.setSelectionRange(start, end, direction);
+          } catch (e) {
+            log.setSelectionRange(start, end);
+          }
+        }
+
+        var scrollTop = parseInt(localStorage.getItem(KEYS.scrollTop), 10);
+        if (!isNaN(scrollTop)) log.scrollTop = scrollTop;
+      }
+
+      function insertAtCaret(text) {
+        var start = log.selectionStart;
+        var end = log.selectionEnd;
+        var value = log.value;
+        log.value = value.slice(0, start) + text + value.slice(end);
+        var pos = start + text.length;
+        log.setSelectionRange(pos, pos);
+      }
+
+      function ensureCaretVisible() {
+        var pos = log.selectionStart;
+        // Place a temporary marker range via scrollHeight heuristic:
+        // scroll so the caret line is above the FAB padding area.
+        var value = log.value;
+        var before = value.slice(0, pos);
+        var lines = before.split("\n").length;
+        var lineHeight = parseFloat(getComputedStyle(log).lineHeight) || 24;
+        var caretY = (lines - 1) * lineHeight;
+        var viewTop = log.scrollTop;
+        var viewBottom = viewTop + log.clientHeight - parseFloat(getComputedStyle(log).paddingBottom);
+
+        if (caretY < viewTop) {
+          log.scrollTo({ top: Math.max(0, caretY - lineHeight), behavior: "smooth" });
+        } else if (caretY + lineHeight > viewBottom) {
+          log.scrollTo({
+            top: caretY + lineHeight - (log.clientHeight - parseFloat(getComputedStyle(log).paddingBottom)),
+            behavior: "smooth"
+          });
+        }
+      }
+
+      function stripOrphanTimestamp() {
+        if (skipOrphanCheck) return;
+
+        var value = log.value;
+        var caret = log.selectionStart;
+        var bounds = lineBounds(value, caret);
+        var line = value.slice(bounds.start, bounds.end);
+
+        if (!ORPHAN_TS_RE.test(line)) return;
+
+        log.value = value.slice(0, bounds.start) + value.slice(bounds.end);
+        log.setSelectionRange(bounds.start, bounds.start);
+      }
+
+      function tryStampBeforeInsert(data) {
+        if (!data || !/\S/.test(data)) return false;
+        if (log.selectionStart !== log.selectionEnd) return false;
+
+        var value = log.value;
+        var pos = log.selectionStart;
+        var bounds = lineBounds(value, pos);
+        var line = value.slice(bounds.start, bounds.end);
+
+        if (!shouldStampLine(line)) return false;
+
+        var stamp = formatTimestamp() + " ";
+        skipOrphanCheck = true;
+        insertAtCaret(stamp + data);
+        skipOrphanCheck = false;
+        save();
+        return true;
+      }
+
+      function onBeforeInput(e) {
+        if (e.isComposing) return;
+        if (e.inputType !== "insertText") return;
+        if (!tryStampBeforeInsert(e.data)) return;
+        e.preventDefault();
+      }
+
+      var supportsBeforeInput = "onbeforeinput" in window;
+
+      function onKeyDown(e) {
+        if (supportsBeforeInput) return;
+        if (e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
+        if (e.key.length !== 1) return;
+        if (!tryStampBeforeInsert(e.key)) return;
+        e.preventDefault();
+      }
+
+      function isDeleteInputType(inputType) {
+        if (!inputType) return true;
+        return (
+          inputType.indexOf("delete") === 0 ||
+          inputType === "historyUndo" ||
+          inputType === "historyRedo"
+        );
+      }
+
+      function onInput(e) {
+        if (isDeleteInputType(e.inputType)) {
+          stripOrphanTimestamp();
+        }
+        save();
+      }
+
+      function atBeginningOfEmptyLine() {
+        if (log.selectionStart !== log.selectionEnd) return false;
+        var value = log.value;
+        var pos = log.selectionStart;
+        var bounds = lineBounds(value, pos);
+        if (pos !== bounds.start) return false;
+        return isWhitespaceOnly(value.slice(bounds.start, bounds.end));
+      }
+
+      function onAddClick() {
+        log.focus();
+
+        if (!atBeginningOfEmptyLine()) {
+          insertAtCaret("\n");
+        }
+
+        skipOrphanCheck = true;
+        insertAtCaret(formatTimestamp() + " ");
+        skipOrphanCheck = false;
+        ensureCaretVisible();
+        save();
+      }
+
+      restore();
+      log.focus();
+
+      // Re-assert focus after layout (helps some mobile browsers).
+      requestAnimationFrame(function () {
+        log.focus();
+      });
+
+      log.addEventListener("beforeinput", onBeforeInput);
+      log.addEventListener("keydown", onKeyDown);
+      log.addEventListener("input", onInput);
+      log.addEventListener("scroll", save, { passive: true });
+      log.addEventListener("blur", save);
+      log.addEventListener("keyup", save);
+      log.addEventListener("select", save);
+      addBtn.addEventListener("click", onAddClick);
+
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", function () {
+          navigator.serviceWorker.register("sw.js").catch(function () {});
+        });
+      }
+    })();
+  </script>
+</body>
+</html>
