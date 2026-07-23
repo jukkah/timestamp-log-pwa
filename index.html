@@ -133,7 +133,7 @@ Use + to insert a timestamp.
 Everything is saved on this device only."
   ></textarea>
   <button id="add" type="button" aria-label="Insert timestamp">+</button>
-  <div id="ver" aria-hidden="true">v4</div>
+  <div id="ver" aria-hidden="true">v5</div>
   <script>
     (function () {
       "use strict";
@@ -431,19 +431,19 @@ Everything is saved on this device only."
         save();
       }
 
-      function atBeginningOfEmptyLine() {
-        if (log.selectionStart !== log.selectionEnd) return false;
-        var value = log.value;
-        var pos = log.selectionStart;
-        var bounds = lineBounds(value, pos);
-        if (pos !== bounds.start) return false;
-        return isWhitespaceOnly(value.slice(bounds.start, bounds.end));
-      }
-
       function onAddClick() {
         log.focus();
 
-        if (!atBeginningOfEmptyLine()) {
+        var value = log.value;
+        // Prefer the end of the selection so a mid-line caret (or range) does not split text.
+        var pos = Math.max(log.selectionStart, log.selectionEnd);
+        var bounds = lineBounds(value, Math.min(pos, value.length));
+        var line = value.slice(bounds.start, bounds.end);
+
+        if (isWhitespaceOnly(line)) {
+          log.setSelectionRange(bounds.start, bounds.start);
+        } else {
+          log.setSelectionRange(bounds.end, bounds.end);
           insertAtCaret("\n");
         }
 
